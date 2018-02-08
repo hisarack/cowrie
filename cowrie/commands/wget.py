@@ -19,6 +19,8 @@ from twisted.python import log, compat
 from cowrie.shell.honeypot import HoneyPotCommand
 from cowrie.shell.fs import *
 
+import Queue
+
 """
 """
 
@@ -130,11 +132,16 @@ class command_wget(HoneyPotCommand):
         self.artifactFile = tempfile.NamedTemporaryFile(dir=self.downloadPath, delete=False)
         # HTTPDownloader will close() the file object so need to preserve the name
         self.artifactName = self.artifactFile.name
-
+        
+        self.signalQueue = Queue.Queue()
         d = self.download(url, outfile, self.artifactFile)
         if d:
             d.addCallback(self.success, outfile)
             d.addErrback(self.error, url)
+            try:
+                self.signalQueue.get(block=True, timeout=300)
+            except Queue.Empty:
+                pass
         else:
             self.exit()
 
@@ -220,9 +227,12 @@ class command_wget(HoneyPotCommand):
             self.fs.chown(outfile, self.protocol.user.uid, self.protocol.user.gid)
         else:
             self.write(filedata)
-
+        
         self.exit()
-
+        self.signalQueue.put({
+            'status': 'ok',
+            'outfile': outfile
+        })
 
     def error(self, error, url):
         """
@@ -239,6 +249,9 @@ class command_wget(HoneyPotCommand):
                                   format='Attempt to download file(s) from URL (%(url)s) failed',
                                   url=self.url)
         self.exit()
+        self.signalQueue.put({
+            'status': 'error'
+        })
 
 commands['/usr/bin/wget'] = command_wget
 commands['/usr/bin/dget'] = command_wget
